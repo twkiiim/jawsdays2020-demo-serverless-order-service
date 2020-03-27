@@ -1,0 +1,75 @@
+service: 
+  name: jawsdays2020-demo-stream
+
+plugins:
+  - serverless-appsync-plugin
+
+provider:
+  name: aws
+  runtime: nodejs10.x
+  region: ap-northeast-1
+  profile: cm-personal
+
+functions:
+  streamToAppSync:
+    name: streamToAppSync
+    handler: streamToAppSync.handler
+    events:
+      - sqs: 
+          arn: arn:aws:sqs:ap-northeast-1:272372341548:jawsdays2020_demo_order_queue
+          batchSize: 1
+
+custom:
+  appSync:
+    name: OrderStream
+    region: ap-northeast-1
+    authenticationType: API_KEY
+    mappingTemplatesLocation: resolvers
+    mappingTemplates:
+      - 
+        type: Mutation
+        field: createOrder
+        dataSource: jawsdays2020_demo_order_for_stream
+      -
+        type: Query
+        field: getOrder
+        dataSource: jawsdays2020_demo_order_for_stream
+        
+    schema:
+      - schema/order.graphql
+    
+    dataSources:
+      - type: AMAZON_DYNAMODB
+        name: jawsdays2020_demo_order_for_stream
+        description: Order Table for AppSync
+        config:
+          tableName: jawsdays2020_demo_order_for_stream
+          iamRoleStatements:
+            - Effect: Allow
+              Action:
+                - dynamodb:*
+              Resource:
+                - arn:aws:dynamodb:${self:provider.region}:*:table/jawsdays2020_demo_order_for_stream
+                - arn:aws:dynamodb:${self:provider.region}:*:table/jawsdays2020_demo_order_for_stream/*
+
+resources:
+  Resources:
+    OrderTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: jawsdays2020_demo_order_for_stream
+        AttributeDefinitions:
+          -
+            AttributeName: id
+            AttributeType: S
+        KeySchema:
+          -
+            AttributeName: id
+            KeyType: HASH
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        TimeToLiveSpecification:
+          AttributeName: expiresAt
+          Enabled: TRUE
+          

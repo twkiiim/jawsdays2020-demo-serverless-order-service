@@ -1,0 +1,223 @@
+service: 
+  name: jawsdays2020-demo-order
+ 
+plugins:
+  - serverless-python-requirements
+  - serverless-step-functions
+
+custom:
+  pythonRequirements:
+    dockerizePip: true
+ 
+provider:
+  name: aws
+  runtime: python3.7
+  region: ap-northeast-1
+  profile: cm-personal
+  iamRoleStatements:
+    - Effect: Allow
+      Resource: arn:aws:dynamodb:ap-northeast-1:*:table/jawsdays2020_demo_order
+      Action: 
+        - dynamodb:*
+    - Effect: Allow
+      Resource: arn:aws:sqs:ap-northeast-1:*:jawsdays2020_demo_order_queue
+      Action: 
+        - sqs:*
+
+package:
+  exclude:
+    - venv/**
+    - manage/**
+    - node_modules/**
+ 
+functions:
+  startOrder:
+    name: startOrder
+    handler: api/startOrder/startOrder.handler
+    events:
+      - http:
+          path: start-order
+          method: post
+          cors: true
+    
+
+  checkOrderStatus:
+    name: checkOrderStatus
+    handler: api/checkOrderStatus/checkOrderStatus.handler
+    events:
+      - http:
+          path: check-order-status
+          method: post
+          cors: true
+
+  stripeWebhook:
+    name: postPayment-stripeWebhook
+    handler: api/postPayment/stripeWebhook.handler
+
+  confirmOrder:
+    name: postPayment-confirmOrder
+    handler: api/postPayment/confirmOrder.handler
+
+  requestDelivery:
+    name: postPayment-requestDelivery
+    handler: api/postPayment/requestDelivery.handler
+
+  cancelOrder:
+    name: postPayment-cancelOrder
+    handler: api/postPayment/cancelOrder.handler
+    
+  cancelDelivery:
+    name: postPayment-cancelDelivery
+    handler: api/postPayment/cancelDelivery.handler
+
+  cancelPayment:
+    name: postPayment-cancelPayment
+    handler: api/postPayment/cancelPayment.handler
+
+  orderSucceeded:
+    name: postPayment-orderSucceeded
+    handler: api/postPayment/orderSucceeded.handler
+    
+  orderFailed:
+    name: postPayment-orderFailed
+    handler: api/postPayment/orderFailed.handler
+
+  sendOrderConfirmEvent:
+    name: postPayment-sendOrderConfirmEvent
+    handler: api/postPayment/sendOrderConfirmEvent.handler
+
+ 
+stepFunctions:
+  stateMachines:
+    postOrderStateMachine:
+      name: jawsdays2020-demo-postOrderStateMachine
+      events:
+        - http:
+            path: stripe-webhook
+            method: post
+            cors: true
+      definition:
+        StartAt: StripeWebhook
+        States:
+          StripeWebhook:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [stripeWebhook, Arn]
+            Next: PaymentSucceeded
+            Catch: 
+              - ErrorEquals: ["States.ALL"]
+                Next: PaymentFailed
+
+          PaymentSucceeded:
+            Type: Pass
+            Next: StartOrderTransaction
+
+          PaymentFailed:
+            Type: Pass
+            End: true
+
+          StartOrderTransaction:
+            Type: Parallel
+            Next: OrderSucceeded
+            ResultPath: null
+            Branches:
+              - StartAt: ConfirmOrder
+                States:
+                  ConfirmOrder:
+                    Type: Task
+                    Resource:
+                      Fn::GetAtt: [confirmOrder, Arn]
+                    End: true
+
+              - StartAt: RequestDelivery
+                States:
+                  RequestDelivery:
+                    Type: Task
+                    Resource:
+                      Fn::GetAtt: [requestDelivery, Arn]
+                    End: true
+            Catch:
+              - ErrorEquals: ["States.ALL"]
+                Next: OrderTransactionFailed
+                ResultPath: null
+
+          OrderTransactionFailed:
+            Type: Pass
+            Next: CompensateOrderTransaction
+
+          CompensateOrderTransaction:
+            Type: Parallel
+            Next: OrderFailed
+            ResultPath: null
+            Branches:
+              - StartAt: CancelPayment
+                States:
+                  CancelPayment:
+                    Type: Task
+                    Resource:
+                      Fn::GetAtt: [cancelPayment, Arn]
+                    Retry:
+                      - ErrorEquals: [ "States.ALL" ]
+                        IntervalSeconds: 1
+                        MaxAttempts: 3
+                        BackoffRate: 2
+                    End: true
+
+              - StartAt: CancelDelivery
+                States:
+                  CancelDelivery:
+                    Type: Task
+                    Resource:
+                      Fn::GetAtt: [cancelDelivery, Arn]
+                    Retry:
+                      - ErrorEquals: [ "States.ALL" ]
+                        IntervalSeconds: 1
+                        MaxAttempts: 3
+                        BackoffRate: 2
+                    End: true
+
+              - StartAt: CancelOrder
+                States:
+                  CancelOrder:
+                    Type: Task
+                    Resource:
+                      Fn::GetAtt: [cancelOrder, Arn]
+                    Retry:
+                      - ErrorEquals: [ "States.ALL" ]
+                        IntervalSeconds: 1
+                        MaxAttempts: 3
+                        BackoffRate: 2
+                    End: true
+
+          OrderFailed:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [orderFailed, Arn]
+            Retry:
+              - ErrorEquals: [ "States.ALL" ]
+                IntervalSeconds: 1
+                MaxAttempts: 3
+                BackoffRate: 2
+            End: true
+          
+          OrderSucceeded:
+            Type: Task
+            Next: SendOrderConfirmEvent
+            ResultPath: null
+            Resource:
+              Fn::GetAtt: [orderSucceeded, Arn]
+            Retry:
+              - ErrorEquals: [ "States.ALL" ]
+                IntervalSeconds: 1
+                MaxAttempts: 3
+                BackoffRate: 2
+            
+            
+          SendOrderConfirmEvent:
+            Type: Task
+            Resource:
+              Fn::GetAtt: [sendOrderConfirmEvent, Arn]
+            End: true
+
+          
+

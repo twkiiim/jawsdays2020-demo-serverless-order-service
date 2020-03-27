@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "aws-appsync": "^3.0.2",
+    "graphql": "^14.6.0",
+    "graphql-tag": "^2.10.3",
+    "isomorphic-fetch": "^2.2.1",
+    "serverless-appsync-plugin": "^1.2.0"
+  },
+  "version": "0.0.0"
+}
